@@ -2,8 +2,10 @@ pragma circom 2.1.6;
 
 include "./zkvm_core.circom";
 
-template ZKVMTrace(n) {
+template ZKVMTrace(n, privateInputsCount, publicInputsCount) {
     signal input instr[2 * n];
+    signal input privateInputs[privateInputsCount];
+    signal input publicInputs[publicInputsCount];
 
     signal output out;
     signal output computedProgramHash;
@@ -12,10 +14,18 @@ template ZKVMTrace(n) {
     signal output halted[n + 1];
     signal output stack[n][n];
 
-    component core = ZKVMCore(n);
+    component core = ZKVMCore(n, privateInputsCount, publicInputsCount);
 
     for (var i = 0; i < 2 * n; i++) {
         core.instr[i] <== instr[i];
+    }
+
+    for (var privateIndex = 0; privateIndex < privateInputsCount; privateIndex++) {
+        core.privateInputs[privateIndex] <== privateInputs[privateIndex];
+    }
+
+    for (var publicIndex = 0; publicIndex < publicInputsCount; publicIndex++) {
+        core.publicInputs[publicIndex] <== publicInputs[publicIndex];
     }
 
     out <== core.out;
@@ -34,4 +44,4 @@ template ZKVMTrace(n) {
     }
 }
 
-component main = ZKVMTrace(6);
+component main = ZKVMTrace(10, 4, 4);

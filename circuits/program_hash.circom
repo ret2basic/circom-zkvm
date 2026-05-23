@@ -15,4 +15,4 @@ template ProgramHashMain(n) {
     computedProgramHash <== hash.out;
 }
 
-component main = ProgramHashMain(6);
+component main = ProgramHashMain(10);
