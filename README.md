@@ -38,7 +38,7 @@ npm install
 npm test
 ```
 
-The tests compile the circuit with `circom_tester`, compare valid executions against the JavaScript reference VM in `src/vm.js`, and assert that invalid opcodes, arithmetic underflow, and invalid `steps` do not satisfy the circuit.
+The tests compile the circuit with `circom_tester`, compare valid executions against the JavaScript reference VM in `src/vm.js`, exhaustively check all 1,024 opcode shapes for the 5-step main circuit, and assert that invalid opcodes, arithmetic underflow, and invalid `steps` do not satisfy the circuit.
 
 ## Compile
 
@@ -50,8 +50,8 @@ An article-style input is available at `examples/article-program.json`:
 
 ```json
 {
-	"instr": [1, 3, 1, 6, 1, 2, 3, 0, 3, 0],
-	"steps": 5
+  "instr": [1, 3, 1, 6, 1, 2, 3, 0, 3, 0],
+  "steps": 5
 }
 ```
 
