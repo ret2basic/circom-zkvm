@@ -5,6 +5,8 @@
   "private": true,
   "scripts": {
     "compile": "mkdir -p build && circom circuits/zkvm.circom --r1cs --wasm --sym -o build",
+    "compile:hash": "mkdir -p build && circom circuits/program_hash.circom --r1cs --wasm --sym -o build",
+    "compile:trace": "mkdir -p build && circom circuits/zkvm_trace.circom --r1cs --wasm --sym -o build",
     "test": "node --test test/**/*.test.js"
   },
   "dependencies": {
