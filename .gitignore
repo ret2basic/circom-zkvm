@@ -1,0 +1,11 @@
+node_modules/
+build/
+coverage/
+*.r1cs
+*.sym
+*.wasm
+*.wtns
+*.zkey
+verification_key.json
+proof.json
+public.json
