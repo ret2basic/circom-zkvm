@@ -11,6 +11,7 @@
     "compile:opcode-table": "mkdir -p build && circom circuits/opcode_table.circom --r1cs --wasm --sym -o build",
     "compile:receipt": "mkdir -p build && circom circuits/receipt_hash.circom --r1cs --wasm --sym -o build",
     "compile:trace": "mkdir -p build && circom circuits/zkvm_trace.circom --r1cs --wasm --sym -o build",
+    "example": "node scripts/run-example.js",
     "test": "node --test test/**/*.test.js"
   },
   "dependencies": {

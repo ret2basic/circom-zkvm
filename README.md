@@ -42,6 +42,9 @@ All arithmetic is over the Circom BN254 scalar field.
 - [src/vm.js](src/vm.js): JavaScript reference VM used by tests.
 - [src/assembler.js](src/assembler.js): small text-to-instruction assembler.
 - [docs/mini-zkvm-book.md](docs/mini-zkvm-book.md): concept-by-concept explanation in a RareSkills-style teaching format.
+- [docs/code-walkthrough.md](docs/code-walkthrough.md): file-by-file guide through the implementation.
+- [docs/running-examples.md](docs/running-examples.md): commands and trace walkthroughs for runnable examples.
+- [docs/completeness-checklist.md](docs/completeness-checklist.md): current feature completeness and explicit non-goals.
 - [docs/sp1-target-roadmap.md](docs/sp1-target-roadmap.md): notes on how this learning project maps to SP1-style boundaries.
 
 ## Setup
@@ -95,4 +98,15 @@ RETURN
 
 This proves knowledge of private inputs `[1, 2]` whose Poseidon hash equals public input slot `0`, then returns `1`.
 
-Ready-to-read examples live in [examples/article-program.asm](examples/article-program.asm), [examples/article-program.json](examples/article-program.json), [examples/private-hash-claim.asm](examples/private-hash-claim.asm), and [examples/private-hash-claim.json](examples/private-hash-claim.json).
+Ready-to-read examples live in [examples/article-program.asm](examples/article-program.asm), [examples/article-program.json](examples/article-program.json), [examples/field-arithmetic.asm](examples/field-arithmetic.asm), [examples/private-hash-claim.asm](examples/private-hash-claim.asm), and [examples/private-hash-claim.json](examples/private-hash-claim.json).
+
+## Run Examples Through Circuits
+
+```bash
+npm run example -- examples/article-program.asm
+npm run example -- examples/field-arithmetic.asm
+npm run example -- examples/private-hash-claim.json
+npm run example -- examples/article-program.asm examples/private-hash-claim.json
+```
+
+The runner executes the real Circom production and trace circuits with `circom_tester`, prints the trace, checks `programHash` / `receiptHash`, and aggregates two receipt hashes when two programs are provided. See [docs/running-examples.md](docs/running-examples.md) for a guided walkthrough.
