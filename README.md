@@ -110,3 +110,5 @@ npm run example -- examples/article-program.asm examples/private-hash-claim.json
 ```
 
 The runner executes the real Circom production and trace circuits with `circom_tester`, prints the trace, checks `programHash` / `receiptHash`, and aggregates two receipt hashes when two programs are provided. See [docs/running-examples.md](docs/running-examples.md) for a guided walkthrough.
+
+`.asm` examples contain instructions only, so the runner uses `[0, 0, 0, 0]` for both private and public inputs. Use `.json` examples when a program needs nonzero `privateInputs` or `publicInputs`.

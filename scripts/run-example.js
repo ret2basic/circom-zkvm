@@ -9,6 +9,7 @@ const { OPCODE_NAMES } = require("../src/vm");
 const MAX_STEPS = 10;
 const INPUT_COUNT = 4;
 const CIRCUITS_DIR = path.join(__dirname, "..", "circuits");
+const ZERO_INPUTS = [0n, 0n, 0n, 0n];
 
 function usage() {
   console.error("usage: node scripts/run-example.js <program.asm|program.json> [second-program.asm|json]");
@@ -31,8 +32,10 @@ function loadProgram(filePath) {
     return {
       filePath,
       instr: assemble(source, { maxSteps: MAX_STEPS }).map(BigInt),
-      privateInputs: [0n, 0n, 0n, 0n],
-      publicInputs: [0n, 0n, 0n, 0n],
+      privateInputs: ZERO_INPUTS,
+      publicInputs: ZERO_INPUTS,
+      privateInputsSource: ".asm files contain only instructions; default zero private inputs were used",
+      publicInputsSource: ".asm files contain only instructions; default zero public inputs were used",
     };
   }
 
@@ -45,8 +48,10 @@ function loadProgram(filePath) {
     return {
       filePath,
       instr: parsed.instr.map((value) => BigInt(value)),
-      privateInputs: toFieldArray(parsed.privateInputs, [0n, 0n, 0n, 0n], "privateInputs"),
-      publicInputs: toFieldArray(parsed.publicInputs, [0n, 0n, 0n, 0n], "publicInputs"),
+      privateInputs: toFieldArray(parsed.privateInputs, ZERO_INPUTS, "privateInputs"),
+      publicInputs: toFieldArray(parsed.publicInputs, ZERO_INPUTS, "publicInputs"),
+      privateInputsSource: parsed.privateInputs === undefined ? "privateInputs missing in JSON; default zeros were used" : "loaded from JSON privateInputs",
+      publicInputsSource: parsed.publicInputs === undefined ? "publicInputs missing in JSON; default zeros were used" : "loaded from JSON publicInputs",
     };
   }
 
@@ -163,8 +168,8 @@ async function aggregateReceipts(aggregateCircuit, receiptHashes) {
 
 function printProgramRun(program, result) {
   console.log(`\nProgram: ${program.filePath}`);
-  console.log(`privateInputs: [${program.privateInputs.join(", ")}]`);
-  console.log(`publicInputs:  [${program.publicInputs.join(", ")}]`);
+  console.log(`privateInputs: [${program.privateInputs.join(", ")}] (${program.privateInputsSource})`);
+  console.log(`publicInputs:  [${program.publicInputs.join(", ")}] (${program.publicInputsSource})`);
   console.log(`programHash:   ${result.programHash}`);
   console.log(`out:           ${result.out}`);
   console.log(`receiptHash:   ${result.receiptHash}`);

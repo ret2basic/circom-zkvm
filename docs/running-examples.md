@@ -45,6 +45,30 @@ runner 会做这些事：
 6. 用 [../circuits/zkvm_trace.circom](../circuits/zkvm_trace.circom) 运行 trace witness，并打印每一步状态。
 7. 如果一次传入两个程序，再用 [../circuits/receipt_aggregate.circom](../circuits/receipt_aggregate.circom) 聚合两个 receipt hash。
 
+### 为什么 `.asm` 例子的 private/public inputs 是 0
+
+`.asm` 文件只保存程序文本，例如 `PUSH 3`、`MUL`、`RETURN`。它不保存 witness 输入。
+
+但是 VM 电路的 ABI 固定需要：
+
+```text
+privateInputs[4]
+publicInputs[4]
+```
+
+所以 runner 在读取 `.asm` 时会自动使用默认输入：
+
+```text
+privateInputs = [0, 0, 0, 0]
+publicInputs = [0, 0, 0, 0]
+```
+
+这对 [../examples/article-program.asm](../examples/article-program.asm) 没有影响，因为这个程序没有执行 `READ_PRIVATE` 或 `READ_PUBLIC`，它只用 `PUSH`、`MUL` 和 `RETURN`。换句话说，输入槽位存在，但程序没有读它们。
+
+如果程序需要非零输入，使用 `.json` 文件。`.json` 可以同时保存 `instr`、`privateInputs` 和 `publicInputs`，例如 [../examples/private-hash-claim.json](../examples/private-hash-claim.json)。
+
+还有一个细节：`programHash` 只绑定程序 `instr`，不绑定输入；`out` 取决于程序实际读了什么；`receiptHash` 会绑定 `programHash`、`publicInputs` 和 `out`。
+
 ## 3. Example 1: article multiplication
 
 命令：
