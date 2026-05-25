@@ -2,6 +2,7 @@ pragma circom 2.1.6;
 
 include "../node_modules/circomlib/circuits/comparators.circom";
 include "../node_modules/circomlib/circuits/poseidon.circom";
+include "./opcode_lookup.circom";
 
 function ceilLog2(value) {
     var bits = 0;
@@ -91,15 +92,6 @@ template ZKVMCore(n, privateInputsCount, publicInputsCount) {
     assert(privateInputsCount > 0);
     assert(publicInputsCount > 0);
 
-    var OP_NOP = 0;
-    var OP_PUSH = 1;
-    var OP_ADD = 2;
-    var OP_MUL = 3;
-    var OP_RETURN = 4;
-    var OP_READ_PRIVATE = 5;
-    var OP_READ_PUBLIC = 6;
-    var OP_ASSERT_EQ = 7;
-    var OP_POSEIDON2 = 8;
     var bits = ceilLog2(n + 2);
     assert(bits <= 252);
 
@@ -128,15 +120,7 @@ template ZKVMCore(n, privateInputsCount, publicInputsCount) {
         state[0][column] <== 0;
     }
 
-    component opIsNop[n];
-    component opIsPush[n];
-    component opIsAdd[n];
-    component opIsMul[n];
-    component opIsReturn[n];
-    component opIsReadPrivate[n];
-    component opIsReadPublic[n];
-    component opIsAssertEq[n];
-    component opIsPoseidon2[n];
+    component opcodeLookup[n];
     component stackDepthLtTwo[n];
     component stackIsFull[n];
     component stackIsEmpty[n];
@@ -205,52 +189,17 @@ template ZKVMCore(n, privateInputsCount, publicInputsCount) {
         halted[step] * (1 - halted[step]) === 0;
         active[step] <== 1 - halted[step];
 
-        opIsNop[step] = IsEqual();
-        opIsNop[step].in[0] <== instr[2 * step];
-        opIsNop[step].in[1] <== OP_NOP;
-        isNop[step] <== opIsNop[step].out;
-
-        opIsPush[step] = IsEqual();
-        opIsPush[step].in[0] <== instr[2 * step];
-        opIsPush[step].in[1] <== OP_PUSH;
-        isPush[step] <== opIsPush[step].out;
-
-        opIsAdd[step] = IsEqual();
-        opIsAdd[step].in[0] <== instr[2 * step];
-        opIsAdd[step].in[1] <== OP_ADD;
-        isAdd[step] <== opIsAdd[step].out;
-
-        opIsMul[step] = IsEqual();
-        opIsMul[step].in[0] <== instr[2 * step];
-        opIsMul[step].in[1] <== OP_MUL;
-        isMul[step] <== opIsMul[step].out;
-
-        opIsReturn[step] = IsEqual();
-        opIsReturn[step].in[0] <== instr[2 * step];
-        opIsReturn[step].in[1] <== OP_RETURN;
-        isReturn[step] <== opIsReturn[step].out;
-
-        opIsReadPrivate[step] = IsEqual();
-        opIsReadPrivate[step].in[0] <== instr[2 * step];
-        opIsReadPrivate[step].in[1] <== OP_READ_PRIVATE;
-        isReadPrivate[step] <== opIsReadPrivate[step].out;
-
-        opIsReadPublic[step] = IsEqual();
-        opIsReadPublic[step].in[0] <== instr[2 * step];
-        opIsReadPublic[step].in[1] <== OP_READ_PUBLIC;
-        isReadPublic[step] <== opIsReadPublic[step].out;
-
-        opIsAssertEq[step] = IsEqual();
-        opIsAssertEq[step].in[0] <== instr[2 * step];
-        opIsAssertEq[step].in[1] <== OP_ASSERT_EQ;
-        isAssertEq[step] <== opIsAssertEq[step].out;
-
-        opIsPoseidon2[step] = IsEqual();
-        opIsPoseidon2[step].in[0] <== instr[2 * step];
-        opIsPoseidon2[step].in[1] <== OP_POSEIDON2;
-        isPoseidon2[step] <== opIsPoseidon2[step].out;
-
-        isNop[step] + isPush[step] + isAdd[step] + isMul[step] + isReturn[step] + isReadPrivate[step] + isReadPublic[step] + isAssertEq[step] + isPoseidon2[step] === 1;
+        opcodeLookup[step] = OpcodeLookup();
+        opcodeLookup[step].opcode <== instr[2 * step];
+        isNop[step] <== opcodeLookup[step].isNop;
+        isPush[step] <== opcodeLookup[step].isPush;
+        isAdd[step] <== opcodeLookup[step].isAdd;
+        isMul[step] <== opcodeLookup[step].isMul;
+        isReturn[step] <== opcodeLookup[step].isReturn;
+        isReadPrivate[step] <== opcodeLookup[step].isReadPrivate;
+        isReadPublic[step] <== opcodeLookup[step].isReadPublic;
+        isAssertEq[step] <== opcodeLookup[step].isAssertEq;
+        isPoseidon2[step] <== opcodeLookup[step].isPoseidon2;
         halted[step] * (1 - isNop[step]) === 0;
 
         effectivePush[step] <== active[step] * isPush[step];
@@ -261,9 +210,9 @@ template ZKVMCore(n, privateInputsCount, publicInputsCount) {
         effectiveReadPublic[step] <== active[step] * isReadPublic[step];
         effectiveAssertEq[step] <== active[step] * isAssertEq[step];
         effectivePoseidon2[step] <== active[step] * isPoseidon2[step];
-        isPushLike[step] <== effectivePush[step] + effectiveReadPrivate[step] + effectiveReadPublic[step];
-        isPopOne[step] <== effectiveAdd[step] + effectiveMul[step] + effectivePoseidon2[step];
-        isPopTwo[step] <== effectiveAssertEq[step];
+        isPushLike[step] <== active[step] * opcodeLookup[step].isPushLike;
+        isPopOne[step] <== active[step] * opcodeLookup[step].isPopOne;
+        isPopTwo[step] <== active[step] * opcodeLookup[step].isPopTwo;
         isSame[step] <== 1 - isPushLike[step] - isPopOne[step] - isPopTwo[step];
 
         stackDepthLtTwo[step] = LessThan(bits);

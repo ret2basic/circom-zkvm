@@ -6,12 +6,26 @@ const { assemble } = require("../src/assembler");
 const { FIELD_MODULUS, OPCODES, circuitInput, execute } = require("../src/vm");
 
 const HASH_CIRCUIT_PATH = path.join(__dirname, "..", "circuits", "program_hash.circom");
+const OPCODE_TABLE_CIRCUIT_PATH = path.join(__dirname, "..", "circuits", "opcode_table.circom");
 const PRODUCTION_CIRCUIT_PATH = path.join(__dirname, "..", "circuits", "zkvm.circom");
+const RECEIPT_HASH_CIRCUIT_PATH = path.join(__dirname, "..", "circuits", "receipt_hash.circom");
+const RECEIPT_AGGREGATE_CIRCUIT_PATH = path.join(__dirname, "..", "circuits", "receipt_aggregate.circom");
 const TRACE_CIRCUIT_PATH = path.join(__dirname, "..", "circuits", "zkvm_trace.circom");
 const MAX_STEPS = 10;
 const ZERO_PRIVATE_INPUTS = [0n, 0n, 0n, 0n];
 const ZERO_PUBLIC_INPUTS = [0n, 0n, 0n, 0n];
 const POSEIDON_1_2 = 7853200120776062878684798364095072458815029376092732009249414926327459813530n;
+const OPCODE_FLAGS = Object.freeze({
+  [OPCODES.NOP]: [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  [OPCODES.PUSH]: [0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0],
+  [OPCODES.ADD]: [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0],
+  [OPCODES.MUL]: [0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0],
+  [OPCODES.RETURN]: [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+  [OPCODES.READ_PRIVATE]: [0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0],
+  [OPCODES.READ_PUBLIC]: [0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0],
+  [OPCODES.ASSERT_EQ]: [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0],
+  [OPCODES.POSEIDON2]: [0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 0, 0],
+});
 
 function instrInput(instr) {
   return {
@@ -42,7 +56,27 @@ async function getProgramHash(hashCircuit, instr) {
   return output.computedProgramHash.toString();
 }
 
-async function expectValid(hashCircuit, productionCircuit, traceCircuit, instr, options = {}) {
+async function getReceiptHash(receiptCircuit, programHash, publicInputs, out) {
+  const witness = await receiptCircuit.calculateWitness({
+    programHash: programHash.toString(),
+    publicInputs: publicInputs.map((value) => value.toString()),
+    out: out.toString(),
+  }, true);
+  await receiptCircuit.checkConstraints(witness);
+  const output = await receiptCircuit.getOutput(witness, { receiptHash: 1 });
+  return output.receiptHash.toString();
+}
+
+async function getAggregateHash(aggregateCircuit, receiptHashes) {
+  const witness = await aggregateCircuit.calculateWitness({
+    receiptHashes: receiptHashes.map((value) => value.toString()),
+  }, true);
+  await aggregateCircuit.checkConstraints(witness);
+  const output = await aggregateCircuit.getOutput(witness, { aggregateHash: 1 });
+  return output.aggregateHash.toString();
+}
+
+async function expectValid(hashCircuit, receiptCircuit, productionCircuit, traceCircuit, instr, options = {}) {
   const privateInputs = options.privateInputs ?? ZERO_PRIVATE_INPUTS;
   const publicInputs = options.publicInputs ?? ZERO_PUBLIC_INPUTS;
   const expected = execute(instr, {
@@ -52,11 +86,13 @@ async function expectValid(hashCircuit, productionCircuit, traceCircuit, instr, 
     poseidon2: options.poseidon2,
   });
   const programHash = await getProgramHash(hashCircuit, instr);
+  const receiptHash = await getReceiptHash(receiptCircuit, programHash, publicInputs, expected.out);
 
   const productionWitness = await productionCircuit.calculateWitness(circuitInput(instr, privateInputs, publicInputs, programHash), true);
   await productionCircuit.checkConstraints(productionWitness);
   await productionCircuit.assertOut(productionWitness, {
     out: expected.out.toString(),
+    receiptHash,
   });
 
   const traceWitness = await traceCircuit.calculateWitness(traceInput(instr, privateInputs, publicInputs), true);
@@ -64,11 +100,14 @@ async function expectValid(hashCircuit, productionCircuit, traceCircuit, instr, 
   await traceCircuit.assertOut(traceWitness, {
     out: expected.out.toString(),
     computedProgramHash: programHash,
+    computedReceiptHash: receiptHash,
     finalSp: expected.finalSp.toString(),
     halted: expected.halted.map((value) => value.toString()),
     sp: expected.sp.map((value) => value.toString()),
     stack: expected.stack.map((row) => row.map((value) => value.toString())),
   });
+
+  return { programHash, receiptHash };
 }
 
 async function expectInvalid(hashCircuit, productionCircuit, instr, options = {}) {
@@ -88,13 +127,34 @@ async function expectInvalid(hashCircuit, productionCircuit, instr, options = {}
 
 describe("ZKVM", function () {
   let hashCircuit;
+  let opcodeTableCircuit;
   let productionCircuit;
+  let receiptCircuit;
+  let aggregateCircuit;
   let traceCircuit;
 
   before(async function () {
     hashCircuit = await wasmTester(HASH_CIRCUIT_PATH);
+    opcodeTableCircuit = await wasmTester(OPCODE_TABLE_CIRCUIT_PATH);
     productionCircuit = await wasmTester(PRODUCTION_CIRCUIT_PATH);
+    receiptCircuit = await wasmTester(RECEIPT_HASH_CIRCUIT_PATH);
+    aggregateCircuit = await wasmTester(RECEIPT_AGGREGATE_CIRCUIT_PATH);
     traceCircuit = await wasmTester(TRACE_CIRCUIT_PATH);
+  });
+
+  it("decodes opcodes through the fixed lookup table", async function () {
+    for (const [opcode, flags] of Object.entries(OPCODE_FLAGS)) {
+      const witness = await opcodeTableCircuit.calculateWitness({ opcode }, true);
+      await opcodeTableCircuit.checkConstraints(witness);
+      await opcodeTableCircuit.assertOut(witness, {
+        flags: flags.map((value) => value.toString()),
+      });
+    }
+
+    await assert.rejects(async () => {
+      const witness = await opcodeTableCircuit.calculateWitness({ opcode: "99" }, true);
+      await opcodeTableCircuit.checkConstraints(witness);
+    });
   });
 
   it("assembles and runs the article-style multiplication program", async function () {
@@ -107,7 +167,7 @@ describe("ZKVM", function () {
       RETURN
     `, { maxSteps: MAX_STEPS });
 
-    await expectValid(hashCircuit, productionCircuit, traceCircuit, instr);
+    await expectValid(hashCircuit, receiptCircuit, productionCircuit, traceCircuit, instr);
   });
 
   it("uses private and public inputs in normal field arithmetic", async function () {
@@ -118,7 +178,7 @@ describe("ZKVM", function () {
       RETURN
     `, { maxSteps: MAX_STEPS });
 
-    await expectValid(hashCircuit, productionCircuit, traceCircuit, instr, {
+    await expectValid(hashCircuit, receiptCircuit, productionCircuit, traceCircuit, instr, {
       privateInputs: [5n, 0n, 0n, 0n],
       publicInputs: [7n, 0n, 0n, 0n],
     });
@@ -135,7 +195,7 @@ describe("ZKVM", function () {
       RETURN
     `, { maxSteps: MAX_STEPS });
 
-    await expectValid(hashCircuit, productionCircuit, traceCircuit, instr, {
+    await expectValid(hashCircuit, receiptCircuit, productionCircuit, traceCircuit, instr, {
       privateInputs: [1n, 2n, 0n, 0n],
       publicInputs: [POSEIDON_1_2, 0n, 0n, 0n],
       poseidon2: poseidon2ForTests,
@@ -169,7 +229,35 @@ describe("ZKVM", function () {
       RETURN
     `, { maxSteps: MAX_STEPS });
 
-    await expectValid(hashCircuit, productionCircuit, traceCircuit, instr);
+    await expectValid(hashCircuit, receiptCircuit, productionCircuit, traceCircuit, instr);
+  });
+
+  it("aggregates receipt hashes into an order-sensitive digest", async function () {
+    const firstInstr = assemble(`
+      PUSH 1
+      RETURN
+    `, { maxSteps: MAX_STEPS });
+    const secondInstr = assemble(`
+      READ_PRIVATE 0
+      READ_PRIVATE 1
+      POSEIDON2
+      READ_PUBLIC 0
+      ASSERT_EQ
+      PUSH 1
+      RETURN
+    `, { maxSteps: MAX_STEPS });
+
+    const firstReceipt = await expectValid(hashCircuit, receiptCircuit, productionCircuit, traceCircuit, firstInstr);
+    const secondReceipt = await expectValid(hashCircuit, receiptCircuit, productionCircuit, traceCircuit, secondInstr, {
+      privateInputs: [1n, 2n, 0n, 0n],
+      publicInputs: [POSEIDON_1_2, 0n, 0n, 0n],
+      poseidon2: poseidon2ForTests,
+    });
+
+    const aggregateHash = await getAggregateHash(aggregateCircuit, [firstReceipt.receiptHash, secondReceipt.receiptHash]);
+    const reversedAggregateHash = await getAggregateHash(aggregateCircuit, [secondReceipt.receiptHash, firstReceipt.receiptHash]);
+
+    assert.notStrictEqual(aggregateHash, reversedAggregateHash);
   });
 
   it("rejects invalid opcodes", async function () {

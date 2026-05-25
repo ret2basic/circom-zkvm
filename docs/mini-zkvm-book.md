@@ -30,7 +30,7 @@
 - production 和 trace 有明确边界。
 - 每个失败场景都有测试。
 
-我们先学习一个 10 步、4 个私有输入、4 个公开输入的小栈 VM。它远远不是 SP1 或 RISC Zero，但它已经有 mature zkVM 的关键形状：program identity、private witness、public values、execution trace、halt、assertion 和 precompile-like hash。
+我们先学习一个 10 步、4 个私有输入、4 个公开输入的小栈 VM。它远远不是 SP1 或 RISC Zero，但它已经有 mature zkVM 的关键形状：program identity、private witness、public values、execution trace、halt、assertion、precompile-like hash、固定 lookup table 和递归友好的 receipt commitment。
 
 ## 1. 我们到底在证明什么
 
@@ -298,7 +298,9 @@ state = [3, 6, 2, 0, 0, ...]
 isNop + isPush + isAdd + isMul + isReturn + isReadPrivate + isReadPublic + isAssertEq + isPoseidon2 === 1
 ```
 
-每个 `isX` 来自一个 `IsEqual()` 组件。例如：
+这些 flag 现在集中在 [../circuits/opcode_lookup.circom](../circuits/opcode_lookup.circom) 里。它不是 PLONK 那种原生 lookup argument，而是 R1CS/Circom 中能直接表达的固定表查询：opcode 必须恰好匹配表里一行，然后这一行输出 `isPushLike`、`isPopOne`、`usesPoseidon`、`returns` 等语义 flags。
+
+每个 `isX` 仍然来自一个 `IsEqual()` 组件。例如：
 
 ```text
 isPush = (opcode == OP_PUSH)
@@ -308,7 +310,7 @@ isPush = (opcode == OP_PUSH)
 
 如果 opcode 是 `99`，所有 flag 都是 `0`，one-hot 总和无法等于 `1`，电路拒绝。
 
-这就是为什么测试里有 “rejects invalid opcodes”。不是 reference VM 拒绝就算完，电路本身也必须拒绝。
+这就是为什么测试里有 “rejects invalid opcodes” 和 “decodes opcodes through the fixed lookup table”。不是 reference VM 拒绝就算完，电路本身也必须拒绝，并且每个合法 opcode 的表输出也要符合预期。
 
 ## 11. active 和 halted
 
@@ -639,6 +641,7 @@ ZKVMProduction(10, 4, 4)
 - `programHash`
 - `publicInputs`
 - `out`
+- `receiptHash`
 
 隐藏：
 
@@ -657,6 +660,7 @@ ZKVMTrace(10, 4, 4)
 它暴露：
 
 - `computedProgramHash`
+- `computedReceiptHash`
 - `finalSp`
 - 每一步的 `sp`
 - 每一步的 `halted`
@@ -665,6 +669,14 @@ ZKVMTrace(10, 4, 4)
 为什么要拆两个入口？因为学习和生产的需求不同。
 
 学习时，我们想看 trace。生产时，我们不想公开 witness trace。成熟系统也有类似分层：debug tooling 可以很透明，最终证明接口必须尽量小。
+
+`receiptHash` 是新增的公开执行收据：
+
+```text
+receiptHash = H(programHash, publicInputs, out)
+```
+
+它不会验证另一份 proof，所以它还不是完整 recursive proof。但它给递归或聚合层一个稳定的公开承诺：上一层只需要处理一个 compact digest，而不是重新携带整组 public data。
 
 ## 23. JavaScript reference VM 的作用
 
@@ -705,6 +717,8 @@ ZKVMTrace(10, 4, 4)
 | missing `RETURN` | 否则程序没有明确输出点。 |
 | non-`NOP` after `RETURN` | 否则 padding 规则不清晰。 |
 | mismatched `programHash` | 否则 prover 可以换程序。 |
+| wrong opcode lookup row | 否则 opcode 语义 flags 可能和 opcode 不一致。 |
+| receipt aggregation order ambiguity | 否则多个执行收据的聚合 claim 不够明确。 |
 
 读 zkVM 电路时，一个好习惯是反过来问：我能不能构造一个普通 VM 不会产生、但电路会接受的 witness？负面测试就是这种思路的工程版本。
 
@@ -756,6 +770,12 @@ out 来自 returnAcc，returnAcc 来自有效 RETURN 时的 state[0]。
 core.programHash === public programHash
 ```
 
+第八，公开 receipt 是否绑定公开执行 claim。
+
+```text
+receiptHash = H(programHash, publicInputs, out)
+```
+
 这些检查不是形式化审计，但足以帮助你发现教学 zkVM 中最常见的漏洞类型。
 
 ## 27. 这个项目和 SP1 的对应关系
@@ -769,8 +789,10 @@ SP1 是成熟 zkVM，本项目是教学电路。不能把二者混为一谈，�
 | `privateInputs` | private witness / stdin | 本项目固定 4 个 field elements。 |
 | `publicInputs` | public values / verifier inputs | 本项目固定 4 个 field elements。 |
 | `out` | committed public output | 本项目只有单个 field output。 |
+| `receiptHash` | public values digest / recursive claim input | 本项目只做公开 claim hash，不验证上一层 proof。 |
 | trace circuit | execution trace / debug tooling | SP1 的 trace 规模和优化复杂得多。 |
 | `POSEIDON2` | precompile / syscall | 本项目只有一个 hash 指令。 |
+| `ReceiptAggregator` | proof aggregation 的公开数据边界 | 本项目只聚合 receipt digest，不做完整递归 verifier。 |
 
 理解这个映射后，再看 SP1 会更容易：你会知道它不是另一种魔法，而是在同一个基本模型上扩展了 ISA、memory、IO、proof pipeline 和工程工具。
 
@@ -813,8 +835,66 @@ RISC Zero 也证明程序执行，但它围绕 RISC-V guest、image ID、journal
 6. 加入 32-bit word 语义，学习 range check 和 bit decomposition。
 7. 接入 `snarkjs`，跑完整 setup / prove / verify。
 8. 写 verifier 示例，展示链上或链下验证流程。
+9. 在 receipt hash 边界上实验真正的 recursive verifier。
 
 每一步都应该配负面测试。不要只加功能，也要证明坏 witness 被拒绝。
+
+## 附录 A：lookup table 在这个项目里到底是什么
+
+很多现代证明系统说 lookup table，指的是 PLONKish lookup argument：证明某些 witness 值来自一张表，并且这个证明比手写大量约束更便宜。
+
+这个项目使用 Circom/R1CS，所以没有原生 lookup argument。我们实现的是教学版固定表查询：
+
+```text
+opcode -> semantic flags
+```
+
+表可以理解成：
+
+| opcode | isPushLike | isPopOne | isPopTwo | usesPoseidon | returns |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| `0` (`NOP`) | 0 | 0 | 0 | 0 | 0 |
+| `1` (`PUSH`) | 1 | 0 | 0 | 0 | 0 |
+| `2` (`ADD`) | 0 | 1 | 0 | 0 | 0 |
+| `3` (`MUL`) | 0 | 1 | 0 | 0 | 0 |
+| `4` (`RETURN`) | 0 | 0 | 0 | 0 | 1 |
+| `5` (`READ_PRIVATE`) | 1 | 0 | 0 | 0 | 0 |
+| `6` (`READ_PUBLIC`) | 1 | 0 | 0 | 0 | 0 |
+| `7` (`ASSERT_EQ`) | 0 | 0 | 1 | 0 | 0 |
+| `8` (`POSEIDON2`) | 0 | 1 | 0 | 1 | 0 |
+
+电路做两件事：
+
+1. 证明 opcode 恰好匹配一行。
+2. 输出这一行对应的 flags。
+
+这样做的价值不是性能暴涨，而是工程结构更接近成熟 zkVM：opcode 解码集中在一张表里，transition 逻辑只消费表输出的语义 flags。以后增加 `DUP`、`SWAP`、`SUB` 时，我们应该先扩 lookup 表，再扩 transition rules。
+
+## 附录 B：receipt hash 和 recursive proof 的关系
+
+完整 recursive proof 的意思是：一个电路内部验证另一份证明。对于 Groth16/BN254 来说，这通常需要在电路里做 pairing 或非原生域运算，工程量远大于这个教学 zkVM 本身。
+
+所以本项目先实现递归友好的公开承诺层，而不是伪装成已经有完整递归 verifier。
+
+单次执行收据：
+
+```text
+receiptHash = PoseidonChain(RECEIPT_VERSION = 3001, programHash, publicInputs..., out)
+```
+
+两个收据的聚合 digest：
+
+```text
+aggregateHash = PoseidonChain(AGGREGATE_VERSION = 4001, receiptHash_0, receiptHash_1)
+```
+
+这提供了一个稳定边界：
+
+- zkVM production circuit 输出 `receiptHash`。
+- aggregation circuit 可以把多个 `receiptHash` 合成一个 `aggregateHash`。
+- 未来真正的 recursive verifier 可以把“验证上一层 proof 得到的 public claim”压缩成同样的 receipt 格式。
+
+换句话说，现在完成的是 recursive proof 之前必须有的 public data model。还没有完成的是“在 Circom 里验证上一份 Groth16 proof”。这一步可以作为后续独立工程来做。
 
 ## 31. 推荐阅读路径
 
@@ -828,11 +908,12 @@ RISC Zero 也证明程序执行，但它围绕 RISC-V guest、image ID、journal
 第二遍，看电路如何表达同一件事：
 
 1. 从 `ProgramHash` 开始。
-2. 看 opcode one-hot。
+2. 看 `OpcodeLookup` 如何集中 opcode one-hot 和语义 flags。
 3. 看 `READ_PRIVATE` 和 `READ_PUBLIC` 的 selector。
 4. 看 `secondValue` 和 `topValue` 如何被选出来。
 5. 看 `state[step + 1]` 如何写回。
 6. 看 `RETURN` 和 `halted`。
+7. 看 `ReceiptHash` 如何绑定公开 claim。
 
 第三遍，看测试：
 
@@ -854,6 +935,8 @@ RISC Zero 也证明程序执行，但它围绕 RISC-V guest、image ID、journal
 - 电路约束每一步 transition。
 - assertion 把程序条件变成证明条件。
 - Poseidon 指令展示了 precompile 的最小形状。
+- opcode lookup table 把指令解码集中成一张固定表。
+- receipt hash 和 aggregate hash 提供递归友好的公开承诺边界。
 - production circuit 隐藏 trace，trace circuit 服务学习和调试。
 
 掌握这些，再进入 SP1、RISC Zero 或更复杂的 zkVM 论文和代码，会更像是在扩展一张熟悉的地图，而不是从黑盒开始猜。

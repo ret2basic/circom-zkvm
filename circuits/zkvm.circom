@@ -1,6 +1,7 @@
 pragma circom 2.1.6;
 
 include "./zkvm_core.circom";
+include "./receipt.circom";
 
 template ZKVMProduction(n, privateInputsCount, publicInputsCount) {
     signal input instr[2 * n];
@@ -8,8 +9,10 @@ template ZKVMProduction(n, privateInputsCount, publicInputsCount) {
     signal input publicInputs[publicInputsCount];
     signal input programHash;
     signal output out;
+    signal output receiptHash;
 
     component core = ZKVMCore(n, privateInputsCount, publicInputsCount);
+    component receipt = ReceiptHash(publicInputsCount);
 
     for (var i = 0; i < 2 * n; i++) {
         core.instr[i] <== instr[i];
@@ -25,6 +28,13 @@ template ZKVMProduction(n, privateInputsCount, publicInputsCount) {
 
     core.programHash === programHash;
     out <== core.out;
+
+    receipt.programHash <== programHash;
+    receipt.out <== core.out;
+    for (var receiptPublicIndex = 0; receiptPublicIndex < publicInputsCount; receiptPublicIndex++) {
+        receipt.publicInputs[receiptPublicIndex] <== publicInputs[receiptPublicIndex];
+    }
+    receiptHash <== receipt.receiptHash;
 }
 
 component main { public [programHash, publicInputs] } = ZKVMProduction(10, 4, 4);
